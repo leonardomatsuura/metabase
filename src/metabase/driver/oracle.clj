@@ -8,8 +8,13 @@
              [config :as config]
              [driver :as driver]
              [util :as u]]
-            [metabase.driver.generic-sql :as sql]
-            [metabase.driver.generic-sql.query-processor :as sqlqp]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
+
+            [metabase.driver.sql.query-processor :as sql.qp]
             [metabase.util
              [honeysql-extensions :as hx]
              [i18n :refer [tru]]
@@ -48,12 +53,9 @@
    [#"URI"         :type/Text]
    [#"XML"         :type/*]])
 
-(defn- connection-details->spec
-  "Create a database specification for an Oracle database. DETAILS should include keys for `:user`,
-   `:password`, and one or both of `:sid` and `:serivce-name`. You can also optionally set `:host` and `:port`."
-  [{:keys [host port sid service-name]
-    :or   {host "localhost", port 1521}
-    :as   details}]
+(defmethod sql-jdbc.conn/connection-details->spec :oracle [_ {:keys [host port sid service-name]
+                                                          :or   {host "localhost", port 1521}
+                                                          :as   details}]
   (assert (or sid service-name))
   (merge {:subprotocol "oracle:thin"
           :subname     (str "@" host
@@ -65,7 +67,7 @@
          (dissoc details :host :port :sid :service-name)))
 
 (defn- can-connect? [details]
-  (let [connection (connection-details->spec (ssh/include-ssh-tunnel details))]
+  (let [connection (sql-jdbc.conn/connection-details->spec (ssh/include-ssh-tunnel details))]
     (= 1M (first (vals (first (jdbc/query connection ["SELECT 1 FROM dual"])))))))
 
 
@@ -111,7 +113,7 @@
 (defn- num-to-ds-interval [unit v] (hsql/call :numtodsinterval v (hx/literal unit)))
 (defn- num-to-ym-interval [unit v] (hsql/call :numtoyminterval v (hx/literal unit)))
 
-(defn- date-interval
+(defmethod driver/date-interval
   "e.g. (SYSDATE + NUMTODSINTERVAL(?, 'second'))"
   [unit amount]
   (hx/+ now (case unit
@@ -126,7 +128,7 @@
 
 
 
-(defn- unix-timestamp->timestamp [field-or-value seconds-or-milliseconds]
+(defmethod sql.qp/unix-timestamp->timestamp [field-or-value seconds-or-milliseconds]
   (hx/+ date-1970-01-01 (num-to-ds-interval :second (case seconds-or-milliseconds
                                                       :seconds      field-or-value
                                                       :milliseconds (hx// field-or-value (hsql/raw 1000))))))
@@ -232,11 +234,11 @@
 
 
 ;; Oracle doesn't support `TRUE`/`FALSE`; use `1`/`0`, respectively; convert these booleans to numbers.
-(defmethod sqlqp/->honeysql [OracleDriver Boolean]
+(defmethod sql.qp/->honeysql [OracleDriver Boolean]
   [_ bool]
   (if bool 1 0))
 
-(defn- string-length-fn [field-key]
+(defmethod sql.qp/string-length-fn [field-key]
   (hsql/call :length field-key))
 
 
@@ -250,14 +252,14 @@
      :rows    (for [row rows]
                 (butlast row))}))
 
-(defn- humanize-connection-error-message [message]
+(defmethod driver/humanize-connection-error-message [message]
   ;; if the connection error message is caused by the assertion above checking whether sid or service-name is set,
   ;; return a slightly nicer looking version. Otherwise just return message as-is
   (if (str/includes? message "(or sid service-name)")
     "You must specify the SID and/or the Service Name."
     message))
 
-(def ^:private oracle-date-formatters (driver/create-db-time-formatters "yyyy-MM-dd HH:mm:ss.SSS zzz"))
+(def ^:private oracle-date-formatters (driver.common/create-db-time-formatters "yyyy-MM-dd HH:mm:ss.SSS zzz"))
 (def ^:private oracle-db-time-query "select to_char(current_timestamp, 'YYYY-MM-DD HH24:MI:SS.FF3 TZD') FROM DUAL")
 
 (u/strict-extend OracleDriver
@@ -266,8 +268,8 @@
          {:can-connect?                      (u/drop-first-arg can-connect?)
           :date-interval                     (u/drop-first-arg date-interval)
           :details-fields                    (constantly (ssh/with-tunnel-config
-                                                           [driver/default-host-details
-                                                            (assoc driver/default-port-details :default 1521)
+                                                           [driver.common/default-host-details
+                                                            (assoc driver.common/default-port-details :default 1521)
                                                             {:name         "sid"
                                                              :display-name (tru "Oracle system ID (SID)")
                                                              :placeholder  (str (tru "Usually something like ORCL or XE.")
@@ -276,17 +278,17 @@
                                                             {:name         "service-name"
                                                              :display-name (tru "Oracle service name")
                                                              :placeholder  (tru "Optional TNS alias")}
-                                                            driver/default-user-details
-                                                            driver/default-password-details]))
+                                                            driver.common/default-user-details
+                                                            driver.common/default-password-details]))
           :execute-query                     (comp remove-rownum-column sqlqp/execute-query)
           :humanize-connection-error-message (u/drop-first-arg humanize-connection-error-message)
-          :current-db-time                   (driver/make-current-db-time-fn oracle-db-time-query oracle-date-formatters)})
+          :current-db-time                   (driver.common/current-db-time oracle-db-time-query oracle-date-formatters)})
 
   sql/ISQLDriver
   (merge (sql/ISQLDriverDefaultsMixin)
          {:apply-limit               (u/drop-first-arg apply-limit)
           :apply-page                (u/drop-first-arg apply-page)
-          :column->base-type         (sql/pattern-based-column->base-type pattern->type)
+          :database-type->base-type         (sql/pattern-based-database-type->base-type pattern->type)
           :connection-details->spec  (u/drop-first-arg connection-details->spec)
           :current-datetime-fn       (constantly now)
           :date                      (u/drop-first-arg date)

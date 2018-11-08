@@ -7,27 +7,28 @@
              [oracle :as oracle]]
             [metabase.test.data.datasets :refer [expect-with-engine]]
             [metabase.test.util :as tu]
-            [metabase.test.util.log :as tu.log])
+            [metabase.test.util.log :as tu.log]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn])
   (:import metabase.driver.oracle.OracleDriver))
 
 ;; make sure we can connect with an SID
 (expect
   {:subprotocol "oracle:thin"
    :subname     "@localhost:1521:ORCL"}
-  (sql/connection-details->spec (OracleDriver.) {:host "localhost"
-                                                 :port 1521
-                                                 :sid  "ORCL"}))
+  (sql-jdbc.conn/connection-details->spec :oracle {:host "localhost"
+                                                   :port 1521
+                                                   :sid  "ORCL"}))
 
 ;; no SID and not Service Name should throw an exception
 (expect
   AssertionError
-  (sql/connection-details->spec (OracleDriver.) {:host "localhost"
-                                                 :port 1521}))
+  (sql-jdbc.conn/connection-details->spec :oracle {:host "localhost"
+                                                   :port 1521}))
 
 (expect
   "You must specify the SID and/or the Service Name."
-  (try (sql/connection-details->spec (OracleDriver.) {:host "localhost"
-                                                      :port 1521})
+  (try (sql-jdbc.conn/connection-details->spec :oracle {:host "localhost"
+                                                        :port 1521})
        (catch Throwable e
          (driver/humanize-connection-error-message (OracleDriver.) (.getMessage e)))))
 
@@ -35,18 +36,18 @@
 (expect
   {:subprotocol "oracle:thin"
    :subname     "@localhost:1521/MyCoolService"}
-  (sql/connection-details->spec (OracleDriver.) {:host         "localhost"
-                                                 :port         1521
-                                                 :service-name "MyCoolService"}))
+  (sql-jdbc.conn/connection-details->spec :oracle {:host         "localhost"
+                                                   :port         1521
+                                                   :service-name "MyCoolService"}))
 
 ;; make sure you can specify a Service Name and an SID
 (expect
   {:subprotocol "oracle:thin"
    :subname     "@localhost:1521:ORCL/MyCoolService"}
-  (sql/connection-details->spec (OracleDriver.) {:host         "localhost"
-                                                 :port         1521
-                                                 :service-name "MyCoolService"
-                                                 :sid          "ORCL"}))
+  (sql-jdbc.conn/connection-details->spec :oracle {:host         "localhost"
+                                                   :port         1521
+                                                   :service-name "MyCoolService"
+                                                   :sid          "ORCL"}))
 
 
 (expect

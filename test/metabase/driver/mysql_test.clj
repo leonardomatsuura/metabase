@@ -10,7 +10,7 @@
             [metabase.driver
              [generic-sql :as sql]
              [mysql :as mysql]]
-            [metabase.driver.generic-sql.query-processor :as sqlqp]
+            [metabase.driver.sql.query-processor :as sql.qp]
             [metabase.models.database :refer [Database]]
             [metabase.test
              [data :as data]
@@ -20,7 +20,8 @@
              [interface :refer [def-database-definition]]]
             [metabase.util.date :as du]
             [toucan.db :as db]
-            [toucan.util.test :as tt])
+            [toucan.util.test :as tt]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn])
   (:import metabase.driver.mysql.MySQLDriver))
 
 ;; MySQL allows 0000-00-00 dates, but JDBC does not; make sure that MySQL is converting them to NULL when returning
@@ -44,10 +45,10 @@
   (str "//localhost:3306/cool?zeroDateTimeBehavior=convertToNull&useUnicode=true&characterEncoding=UTF8"
        "&characterSetResults=UTF8&useLegacyDatetimeCode=true&useJDBCCompliantTimezoneShift=true"
        "&useSSL=false&tinyInt1isBit=false")
-  (:subname (sql/connection-details->spec (MySQLDriver.) {:host               "localhost"
-                                                          :port               "3306"
-                                                          :dbname             "cool"
-                                                          :additional-options "tinyInt1isBit=false"})))
+  (:subname (sql-jdbc.conn/connection-details->spec :mysql {:host               "localhost"
+                                                            :port               "3306"
+                                                            :dbname             "cool"
+                                                            :additional-options "tinyInt1isBit=false"})))
 
 
 ;; Test how TINYINT(1) columns are interpreted. By default, they should be interpreted as integers, but with the
@@ -117,19 +118,19 @@
 (expect
   ["?" (du/->Timestamp #inst "2018-01-03")]
   (tu/with-temporary-setting-values [report-timezone nil]
-    (hsql/format (sqlqp/->honeysql (MySQLDriver.) (du/->Timestamp #inst "2018-01-03")))))
+    (hsql/format (sql.qp/->honeysql (MySQLDriver.) (du/->Timestamp #inst "2018-01-03")))))
 
 ;; ...with a report-timezone set
 (expect
   ["convert_tz('2018-01-03T00:00:00.000', '+00:00', '-08:00')"]
   (tu/with-temporary-setting-values [report-timezone "US/Pacific"]
-    (hsql/format (sqlqp/->honeysql (MySQLDriver.) (du/->Timestamp #inst "2018-01-03")))))
+    (hsql/format (sql.qp/->honeysql (MySQLDriver.) (du/->Timestamp #inst "2018-01-03")))))
 
 ;; ...with a report-timezone set to the same as the system timezone (shouldn't need to do TZ conversion)
 (expect
   ["?" (du/->Timestamp #inst "2018-01-03")]
   (tu/with-temporary-setting-values [report-timezone "UTC"]
-    (hsql/format (sqlqp/->honeysql (MySQLDriver.) (du/->Timestamp #inst "2018-01-03")))))
+    (hsql/format (sql.qp/->honeysql (MySQLDriver.) (du/->Timestamp #inst "2018-01-03")))))
 
 ;; Most of our tests either deal in UTC (offset 00:00) or America/Los_Angeles timezones (-07:00/-08:00). When dealing
 ;; with dates, we will often truncate the timestamp to a date. When we only test with negative timezone offsets, in

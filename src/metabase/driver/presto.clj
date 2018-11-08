@@ -16,9 +16,14 @@
              [config :as config]
              [driver :as driver]
              [util :as u]]
-            [metabase.driver.generic-sql :as sql]
-            [metabase.driver.generic-sql.query-processor :as sqlqp]
+
+            [metabase.driver.sql.query-processor :as sql.qp]
             [metabase.driver.generic-sql.util.unprepare :as unprepare]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
             [metabase.query-processor
              [store :as qp.store]
              [util :as qputil]]
@@ -159,7 +164,7 @@
                                                           " LIKE 'information_schema'"))]
     (= v "information_schema")))
 
-(defn- date-interval [unit amount]
+(defmethod driver/date-interval [unit amount]
   (hsql/call :date_add (hx/literal unit) amount :%now))
 
 (s/defn ^:private database->all-schemas :- #{su/NonBlankString}
@@ -213,21 +218,21 @@
                      :database-type type
                      :base-type     (presto-type->base-type type)}))}))
 
-(defmethod sqlqp/->honeysql [PrestoDriver String]
+(defmethod sql.qp/->honeysql [PrestoDriver String]
   [_ s]
   (hx/literal (str/replace s "'" "''")))
 
-(defmethod sqlqp/->honeysql [PrestoDriver Boolean]
+(defmethod sql.qp/->honeysql [PrestoDriver Boolean]
   [_ bool]
   (hsql/raw (if bool "TRUE" "FALSE")))
 
-(defmethod sqlqp/->honeysql [PrestoDriver Date]
+(defmethod sql.qp/->honeysql [PrestoDriver Date]
   [_ date]
   (hsql/call :from_iso8601_timestamp (hx/literal (du/date->iso-8601 date))))
 
-(defmethod sqlqp/->honeysql [PrestoDriver :stddev]
+(defmethod sql.qp/->honeysql [PrestoDriver :stddev]
   [driver [_ field]]
-  (hsql/call :stddev_samp (sqlqp/->honeysql driver field)))
+  (hsql/call :stddev_samp (sql.qp/->honeysql driver field)))
 
 (def ^:private time-format (tformat/formatter "HH:mm:SS.SSS"))
 
@@ -238,7 +243,7 @@
    (let [tz (time/time-zone-for-id tz-id)]
      (tformat/unparse (tformat/with-zone time-format tz) (tcoerce/to-date-time t)))))
 
-(defmethod sqlqp/->honeysql [PrestoDriver :time]
+(defmethod sql.qp/->honeysql [PrestoDriver :time]
   [_ [_ value]]
   (hx/cast :time (time->str value (driver/report-timezone))))
 
@@ -266,16 +271,16 @@
        {:cols columns}))))
 
 
-(defn- humanize-connection-error-message [message]
+(defmethod driver/humanize-connection-error-message [message]
   (condp re-matches message
     #"^java.net.ConnectException: Connection refused.*$"
-    (driver/connection-error-messages :cannot-connect-check-host-and-port)
+    (driver.common/connection-error-messages :cannot-connect-check-host-and-port)
 
     #"^clojure.lang.ExceptionInfo: Catalog .* does not exist.*$"
-    (driver/connection-error-messages :database-name-incorrect)
+    (driver.common/connection-error-messages :database-name-incorrect)
 
     #"^java.net.UnknownHostException.*$"
-    (driver/connection-error-messages :invalid-hostname)
+    (driver.common/connection-error-messages :invalid-hostname)
 
     #".*" ; default
     message))
@@ -320,10 +325,10 @@
     :quarter-of-year (hsql/call :quarter expr)
     :year            (hsql/call :year expr)))
 
-(defn- string-length-fn [field-key]
+(defmethod sql.qp/string-length-fn [field-key]
   (hsql/call :length field-key))
 
-(defn- unix-timestamp->timestamp [expr seconds-or-milliseconds]
+(defmethod sql.qp/unix-timestamp->timestamp [expr seconds-or-milliseconds]
   (case seconds-or-milliseconds
     :seconds      (hsql/call :from_unixtime expr)
     :milliseconds (recur (hx// expr 1000.0) :seconds)))
@@ -331,7 +336,7 @@
 
 ;;; Driver implementation
 
-(def ^:private presto-date-formatters (driver/create-db-time-formatters "yyyy-MM-dd'T'HH:mm:ss.SSSZ"))
+(def ^:private presto-date-formatters (driver.common/create-db-time-formatters "yyyy-MM-dd'T'HH:mm:ss.SSSZ"))
 (def ^:private presto-db-time-query "select to_iso8601(current_timestamp)")
 
 (u/strict-extend PrestoDriver
@@ -343,14 +348,14 @@
           :describe-table                    (u/drop-first-arg describe-table)
           :describe-table-fks                (constantly nil) ; no FKs in Presto
           :details-fields                    (constantly (ssh/with-tunnel-config
-                                                           [driver/default-host-details
-                                                            (assoc driver/default-port-details :default 8080)
-                                                            (assoc driver/default-dbname-details
+                                                           [driver.common/default-host-details
+                                                            (assoc driver.common/default-port-details :default 8080)
+                                                            (assoc driver.common/default-dbname-details
                                                               :name         "catalog"
                                                               :placeholder  (tru "hive"))
-                                                            driver/default-user-details
-                                                            driver/default-password-details
-                                                            driver/default-ssl-details]))
+                                                            driver.common/default-user-details
+                                                            driver.common/default-password-details
+                                                            driver.common/default-ssl-details]))
           :execute-query                     (u/drop-first-arg execute-query)
           :features                          (constantly (set/union #{:set-timezone
                                                                       :basic-aggregations
@@ -364,12 +369,12 @@
                                                                       ;; during unit tests don't treat presto as having FK support
                                                                       #{:foreign-keys})))
           :humanize-connection-error-message (u/drop-first-arg humanize-connection-error-message)
-          :current-db-time                   (driver/make-current-db-time-fn presto-db-time-query presto-date-formatters)})
+          :current-db-time                   (driver.common/current-db-time presto-db-time-query presto-date-formatters)})
 
   sql/ISQLDriver
   (merge (sql/ISQLDriverDefaultsMixin)
          {:apply-page                (u/drop-first-arg apply-page)
-          :column->base-type         (constantly nil)
+          :database-type->base-type         (constantly nil)
           :connection-details->spec  (constantly nil)
           :current-datetime-fn       (constantly :%now)
           :date                      (u/drop-first-arg date)

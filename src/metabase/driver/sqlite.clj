@@ -10,8 +10,13 @@
              [config :as config]
              [driver :as driver]
              [util :as u]]
-            [metabase.driver.generic-sql :as sql]
-            [metabase.driver.generic-sql.query-processor :as sqlqp]
+
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
             [metabase.util
              [date :as du]
              [honeysql-extensions :as hx]
@@ -24,12 +29,9 @@
   clojure.lang.Named
   (getName [_] "SQLite"))
 
-(defn- connection-details->spec
-  "Create a database specification for a SQLite3 database. DETAILS should include a key for `:db` which is the path to
-  the database file."
-  [{:keys [db]
-    :or   {db "sqlite.db"}
-    :as   details}]
+(defmethod sql-jdbc.conn/connection-details->spec :sqlite [_ {:keys [db]
+                                                          :or   {db "sqlite.db"}
+                                                          :as   details}]
   (merge {:classname   "org.sqlite.JDBC"
           :subprotocol "sqlite"
           :subname     db}
@@ -111,7 +113,7 @@
                              3)
       :year            (hx/->integer (strftime "%Y" v)))))
 
-(defn- date-interval [unit amount]
+(defmethod driver/date-interval [unit amount]
   (let [[multiplier sqlite-unit] (case unit
                                    :second  [1 "seconds"]
                                    :minute  [1 "minutes"]
@@ -136,7 +138,7 @@
     (->datetime (date unit (hx/literal "now"))
                 (hx/literal (format "%+d %s" (* amount multiplier) sqlite-unit)))))
 
-(defn- unix-timestamp->timestamp [expr seconds-or-milliseconds]
+(defmethod sql.qp/unix-timestamp->timestamp [expr seconds-or-milliseconds]
   (case seconds-or-milliseconds
     :seconds      (->datetime expr (hx/literal "unixepoch"))
     :milliseconds (recur (hx// expr 1000) :seconds)))
@@ -154,23 +156,23 @@
   (sql/make-stmt-subs "?" [(du/format-date "yyyy-MM-dd" date)]))
 
 ;; SQLite doesn't support `TRUE`/`FALSE`; it uses `1`/`0`, respectively; convert these booleans to numbers.
-(defmethod sqlqp/->honeysql [SQLiteDriver Boolean]
+(defmethod sql.qp/->honeysql [SQLiteDriver Boolean]
   [_ bool]
   (if bool 1 0))
 
-(defmethod sqlqp/->honeysql [SQLiteDriver Time]
+(defmethod sql.qp/->honeysql [SQLiteDriver Time]
   [_ time-value]
   (->> time-value
        tcoerce/to-date-time
        (tformat/unparse (tformat/formatters :hour-minute-second-ms))
        (hsql/call :time)))
 
-(defn- string-length-fn [field-key]
+(defmethod sql.qp/string-length-fn [field-key]
   (hsql/call :length field-key))
 
 
 ;; SQLite defaults everything to UTC
-(def ^:private sqlite-date-formatters (driver/create-db-time-formatters "yyyy-MM-dd HH:mm:ss"))
+(def ^:private sqlite-date-formatters (driver.common/create-db-time-formatters "yyyy-MM-dd HH:mm:ss"))
 (def ^:private sqlite-db-time-query "select cast(datetime('now') as text);")
 
 (u/strict-extend SQLiteDriver
@@ -195,13 +197,13 @@
                                  ;; in the tests.
                                  (when config/is-test?
                                    :foreign-keys))))
-    :current-db-time (driver/make-current-db-time-fn sqlite-db-time-query sqlite-date-formatters)})
+    :current-db-time (driver.common/current-db-time sqlite-db-time-query sqlite-date-formatters)})
 
   sql/ISQLDriver
   (merge
    (sql/ISQLDriverDefaultsMixin)
-   {:active-tables             sql/post-filtered-active-tables
-    :column->base-type         (sql/pattern-based-column->base-type pattern->type)
+   {:active-tables             sql.qp/post-filtered-active-tables
+    :database-type->base-type         (sql/pattern-based-database-type->base-type pattern->type)
     :connection-details->spec  (u/drop-first-arg connection-details->spec)
     :current-datetime-fn       (constantly (hsql/call :datetime (hx/literal :now)))
     :date                      (u/drop-first-arg date)

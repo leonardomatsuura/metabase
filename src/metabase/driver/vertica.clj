@@ -2,17 +2,22 @@
   (:require [clojure.java.jdbc :as jdbc]
             [clojure.set :as set]
             [clojure.tools.logging :as log]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
             [honeysql.core :as hsql]
             [metabase
              [driver :as driver]
              [util :as u]]
-            [metabase.driver.generic-sql :as sql]
+
             [metabase.util
              [date :as du]
              [honeysql-extensions :as hx]
              [ssh :as ssh]]))
 
-(def ^:private ^:const column->base-type
+(def ^:private database-type->base-type
   "Map of Vertica column types -> Field base types. Add more mappings here as you come across them."
   {:Boolean        :type/Boolean
    :Integer        :type/Integer
@@ -34,19 +39,17 @@
    (keyword "Long Varchar")   :type/Text
    (keyword "Long Varbinary") :type/*})
 
-(defn- connection-details->spec [{:keys [host port db dbname]
-                                  :or   {host "localhost", port 5433, db ""}
-                                  :as   details}]
+(defmethod sql-jdbc.conn/connection-details->spec :vertica [_ {:keys [host port db dbname]
+                                                           :or   {host "localhost", port 5433, db ""}
+                                                           :as   details}]
   (-> (merge {:classname   "com.vertica.jdbc.Driver"
               :subprotocol "vertica"
               :subname     (str "//" host ":" port "/" (or dbname db))}
              (dissoc details :host :port :dbname :db :ssl))
-      (sql/handle-additional-options details)))
+      (sql-jdbc.common/handle-additional-options details)))
 
-(defn- unix-timestamp->timestamp [expr seconds-or-milliseconds]
-  (case seconds-or-milliseconds
-    :seconds      (hsql/call :to_timestamp expr)
-    :milliseconds (recur (hx// expr 1000) :seconds)))
+(defmethod sql.qp/unix-timestamp->timestamp [:vertica :seconds] [_ _ expr]
+  (hsql/call :to_timestamp expr))
 
 (defn- cast-timestamp
   "Vertica requires stringified timestamps (what Date/DateTime/Timestamps are converted to) to be cast as timestamps
@@ -86,14 +89,14 @@
     :quarter-of-year (extract-integer :quarter expr)
     :year            (extract-integer :year expr)))
 
-(defn- date-interval [unit amount]
+(defmethod driver/date-interval [unit amount]
   (hsql/raw (format "(NOW() + INTERVAL '%d %s')" (int amount) (name unit))))
 
 (defn- materialized-views
   "Fetch the Materialized Views for a Vertica DATABASE.
    These are returned as a set of maps, the same format as `:tables` returned by `describe-database`."
   [database]
-  (try (set (jdbc/query (sql/db->jdbc-connection-spec database)
+  (try (set (jdbc/query (sql-jdbc.conn/db->jdbc-connection-spec database)
                         ["SELECT TABLE_SCHEMA AS \"schema\", TABLE_NAME AS \"name\" FROM V_CATALOG.VIEWS;"]))
        (catch Throwable e
          (log/error "Failed to fetch materialized views for this database:" (.getMessage e)))))
@@ -103,7 +106,7 @@
   [driver database]
   (update (sql/describe-database driver database) :tables (u/rpartial set/union (materialized-views database))))
 
-(defn- string-length-fn [field-key]
+(defmethod sql.qp/string-length-fn [field-key]
   (hsql/call :char_length (hx/cast :Varchar field-key)))
 
 
@@ -112,7 +115,7 @@
   clojure.lang.Named
   (getName [_] "Vertica"))
 
-(def ^:private vertica-date-formatters (driver/create-db-time-formatters "yyyy-MM-dd HH:mm:ss z"))
+(def ^:private vertica-date-formatters (driver.common/create-db-time-formatters "yyyy-MM-dd HH:mm:ss z"))
 (def ^:private vertica-db-time-query "select to_char(CURRENT_TIMESTAMP, 'YYYY-MM-DD HH24:MI:SS TZ')")
 
 (u/strict-extend VerticaDriver
@@ -121,17 +124,17 @@
          {:date-interval     (u/drop-first-arg date-interval)
           :describe-database describe-database
           :details-fields    (constantly (ssh/with-tunnel-config
-                                           [driver/default-host-details
-                                            (assoc driver/default-port-details :default 5433)
-                                            driver/default-dbname-details
-                                            driver/default-user-details
-                                            driver/default-password-details
-                                            (assoc driver/default-additional-options-details
+                                           [driver.common/default-host-details
+                                            (assoc driver.common/default-port-details :default 5433)
+                                            driver.common/default-dbname-details
+                                            driver.common/default-user-details
+                                            driver.common/default-password-details
+                                            (assoc driver.common/default-additional-options-details
                                               :placeholder "ConnectionLoadBalance=1")]))
-          :current-db-time   (driver/make-current-db-time-fn vertica-db-time-query vertica-date-formatters)})
+          :current-db-time   (driver.common/current-db-time vertica-db-time-query vertica-date-formatters)})
   sql/ISQLDriver
   (merge (sql/ISQLDriverDefaultsMixin)
-         {:column->base-type         (u/drop-first-arg column->base-type)
+         {:database-type->base-type         (u/drop-first-arg database-type->base-type)
           :connection-details->spec  (u/drop-first-arg connection-details->spec)
           :date                      (u/drop-first-arg date)
           :set-timezone-sql          (constantly "SET TIME ZONE TO %s;")
@@ -144,4 +147,4 @@
   ;; only register the Vertica driver if the JDBC driver is available
   (when (u/ignore-exceptions
          (Class/forName "com.vertica.jdbc.Driver"))
-    (driver/register-driver! :vertica (VerticaDriver.))))
+    (driver/register-driver! :vertica :vertica)))

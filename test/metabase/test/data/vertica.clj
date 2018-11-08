@@ -1,11 +1,10 @@
 (ns metabase.test.data.vertica
   "Code for creating / destroying a Vertica database from a `DatabaseDefinition`."
-  (:require [metabase.driver.generic-sql :as sql]
+  (:require
             [metabase.test.data
              [generic-sql :as generic]
              [interface :as i]]
-            [metabase.util :as u])
-  (:import metabase.driver.vertica.VerticaDriver))
+            [metabase.util :as u]))
 
 (def ^:private ^:const field-base-type->sql-type
   {:type/BigInteger "BIGINT"
@@ -58,7 +57,7 @@
 
 
 (defn- dbspec [& _]
-  (sql/connection-details->spec (VerticaDriver.) @db-connection-details))
+  (sql-jdbc.conn/connection-details->spec :vertica @db-connection-details))
 
 (defn- set-max-client-sessions!
   {:expectations-options :before-run}

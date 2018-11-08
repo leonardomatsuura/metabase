@@ -77,7 +77,7 @@
 (defn call-with-effective-timezone
   "Invokes `f` with `*report-timezone*` and `*data-timezone*` bound for the given `db`"
   [db f]
-  (let [driver    ((resolve 'metabase.driver/->driver) db)
+  (let [driver    ((resolve 'metabase.driver/database->driver) db)
         report-tz (when-let [report-tz-id (and driver ((resolve 'metabase.driver/report-timezone-if-supported) driver))]
                     (coerce-to-timezone report-tz-id))
         data-tz   (some-> db :timezone coerce-to-timezone)

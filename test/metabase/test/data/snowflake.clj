@@ -1,7 +1,7 @@
 (ns metabase.test.data.snowflake
   (:require [clojure.java.jdbc :as jdbc]
             [clojure.string :as str]
-            [metabase.driver.generic-sql :as sql]
+
             [metabase.test.data
              [generic-sql :as generic]
              [interface :as i]]
@@ -9,7 +9,8 @@
             [honeysql.core :as hsql]
             [honeysql.helpers :as h]
             [metabase.util.honeysql-extensions :as hx]
-            [honeysql.format :as hformat])
+            [honeysql.format :as hformat]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn])
   (:import metabase.driver.snowflake.SnowflakeDriver))
 
 (def ^:private ^SnowflakeDriver snowflake-driver (SnowflakeDriver.))
@@ -59,7 +60,7 @@
 (defn- no-db-connection-spec
   "Connection spec for connecting to our Snowflake instance without specifying a DB."
   []
-  (sql/connection-details->spec snowflake-driver (database->connection-details nil nil)))
+  (sql-jdbc.conn/connection-details->spec snowflake-driver (database->connection-details nil nil)))
 
 (defn- existing-dataset-names []
   (let [db-spec (no-db-connection-spec)]

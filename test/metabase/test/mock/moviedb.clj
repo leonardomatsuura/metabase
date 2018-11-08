@@ -83,7 +83,7 @@
   (-> (get moviedb-tables (:name table))
       (dissoc :fks)))
 
-(defn- describe-table-fks [_ _ table]
+(defmethod driver/describe-table-fks [_ _ table]
   (-> (get moviedb-tables (:name table))
       :fks
       set))

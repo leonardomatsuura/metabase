@@ -7,7 +7,7 @@
             [honeysql.core :as hsql]
             [medley.core :as m]
             [metabase.driver :as driver]
-            [metabase.driver.generic-sql :as sql]
+
             [metabase.models.field :as field :refer [Field]]
             [metabase.query-processor.interface :as qp.i]
             [metabase.query-processor.middleware.parameters.dates :as date-params]
@@ -572,7 +572,7 @@
   the query. If there is no driver, use the database to find the right driver or throw."
   [{:keys [driver database] :as query}]
   (or driver
-      (driver/database-id->driver database)
+      (driver/database->driver database)
       (throw (IllegalArgumentException. "Could not resolve driver"))))
 
 (defn expand

@@ -7,13 +7,14 @@
              [format :as hformat]
              [helpers :as h]]
             [medley.core :as m]
-            [metabase.driver.generic-sql :as sql]
-            [metabase.driver.generic-sql.query-processor :as sqlqp]
+
+            [metabase.driver.sql.query-processor :as sql.qp]
             [metabase.test.data.interface :as i]
             [metabase.util :as u]
             [metabase.util
              [date :as du]
-             [honeysql-extensions :as hx]])
+             [honeysql-extensions :as hx]]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn])
   (:import clojure.lang.Keyword
            java.sql.SQLException
            [metabase.test.data.interface DatabaseDefinition FieldDefinition TableDefinition]))
@@ -95,7 +96,7 @@
 
   (database->spec [this, ^Keyword context, ^DatabaseDefinition dbdef]
     "*Optional*. Return a JDBC spec that should be used to connect to DBDEF.
-     Uses `sql/connection-details->spec` by default.")
+     Uses `jdbc-sql.conn/connection-details->spec` by default.")
 
   (load-data! [this, ^DatabaseDefinition dbdef, ^TableDefinition tabledef]
     "*Optional*. Load the rows for a specific table into a DB. `load-data-chunked` is the default implementation.")
@@ -199,7 +200,7 @@
    (quote+combine-names driver (qualified-name-components driver db-name table-name field-name))))
 
 (defn- default-database->spec [driver context dbdef]
-  (sql/connection-details->spec driver (i/database->connection-details driver context dbdef)))
+  (sql-jdbc.conn/connection-details->spec driver (i/database->connection-details driver context dbdef)))
 
 
 ;;; Loading Table Data
@@ -268,7 +269,7 @@
         columns     (keys (first rows))
         values      (for [row rows]
                       (for [value (map row columns)]
-                        (sqlqp/->honeysql driver value)))
+                        (sql.qp/->honeysql driver value)))
         hsql-form   (-> (apply h/columns (for [column columns]
                                            (hx/qualify-and-escape-dots (prepare-key column))))
                         (h/insert-into (prepare-key table-name))

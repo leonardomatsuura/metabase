@@ -8,7 +8,8 @@
             [metabase.test.data
              [generic-sql :as generic]
              [interface :as i]]
-            [metabase.util :as u])
+            [metabase.util :as u]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn])
   (:import metabase.driver.oracle.OracleDriver))
 
 ;; Similar to SQL Server, Oracle on AWS doesn't let you create different databases;
@@ -85,7 +86,7 @@
           :has-questionable-timezone-support? (constantly true)}))
 
 (defn- dbspec [& _]
-  (sql/connection-details->spec (OracleDriver.) @db-connection-details))
+  (sql-jdbc.conn/connection-details->spec (OracleDriver.) @db-connection-details))
 
 (defn- non-session-schemas
   "Return a set of the names of schemas (users) that are not meant for use in this test session (i.e., ones that should

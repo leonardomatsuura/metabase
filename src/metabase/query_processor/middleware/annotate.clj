@@ -4,6 +4,7 @@
             [metabase
              [driver :as driver]
              [util :as u]]
+            [metabase.driver.common :as driver.common]
             [metabase.mbql
              [predicates :as mbql.preds]
              [schema :as mbql.s]
@@ -47,8 +48,8 @@
          {:name         (name col)
           :display_name (or (humanization/name->human-readable-name (u/keyword->qualified-name col))
                             (u/keyword->qualified-name col))
-          :base_type    (or (driver/values->base-type (for [row rows]
-                                                        (nth row i)))
+          :base_type    (or (driver.common/values->base-type (for [row rows]
+                                                               (nth row i)))
                             :type/*)
           :source       :native})))
 

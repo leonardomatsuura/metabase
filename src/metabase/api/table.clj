@@ -217,7 +217,7 @@
   "Returns the query metadata used to power the query builder for the given table `table-or-table-id`"
   [table include_sensitive_fields]
   (api/read-check table)
-  (let [driver (driver/database-id->driver (:db_id table))]
+  (let [driver (driver/database->driver (:db_id table))]
     (-> table
         (hydrate :db [:fields [:target :has_field_values] :dimensions :has_field_values] :segments :metrics)
         (m/dissoc-in [:db :details])
@@ -244,7 +244,7 @@
   "Return a sequence of 'virtual' fields metadata for the 'virtual' table for a Card in the Saved Questions 'virtual'
    database."
   [card-id database-id metadata]
-  (let [add-field-dimension-options #(assoc-field-dimension-options (driver/database-id->driver database-id) %)]
+  (let [add-field-dimension-options #(assoc-field-dimension-options (driver/database->driver database-id) %)]
     (for [col metadata]
       (-> col
           (update :base_type keyword)
@@ -291,7 +291,7 @@
     (-> card
         api/read-check
         (card->virtual-table :include-fields? true)
-        (assoc-dimension-options (driver/database-id->driver database_id))
+        (assoc-dimension-options (driver/database->driver database_id))
         remove-nested-pk-fk-special-types)))
 
 (api/defendpoint GET "/card__:id/fks"

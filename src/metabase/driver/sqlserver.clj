@@ -5,8 +5,13 @@
              [config :as config]
              [driver :as driver]
              [util :as u]]
-            [metabase.driver.generic-sql :as sql]
-            [metabase.driver.generic-sql.query-processor :as sqlqp]
+
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
             [metabase.util
              [honeysql-extensions :as hx]
              [i18n :refer [tru]]
@@ -18,7 +23,7 @@
   clojure.lang.Named
   (getName [_] "SQL Server"))
 
-(defn- column->base-type
+(defmethod sql-jdbc.sync/database-type->base-type
   "Mappings for SQLServer types to Metabase types.
    See the list here: https://docs.microsoft.com/en-us/sql/connect/jdbc/using-basic-data-types"
   [column-type]
@@ -60,12 +65,9 @@
     (keyword "int identity") :type/Integer} column-type)) ; auto-incrementing integer (ie pk) field
 
 
-(defn- connection-details->spec
-  "Build the connection spec for a SQL Server database from the DETAILS set in the admin panel.
-   Check out the full list of options here: `https://technet.microsoft.com/en-us/library/ms378988(v=sql.105).aspx`"
-  [{:keys [user password db host port instance domain ssl]
-    :or   {user "dbuser", password "dbpassword", db "", host "localhost"}
-    :as   details}]
+(defmethod sql-jdbc.conn/connection-details->spec :sqlserver [_ {:keys [user password db host port instance domain ssl]
+                                                             :or   {user "dbuser", password "dbpassword", db "", host "localhost"}
+                                                             :as   details}]
   (-> {:applicationName config/mb-app-id-string
        :classname       "com.microsoft.sqlserver.jdbc.SQLServerDriver"
        :subprotocol     "sqlserver"
@@ -89,7 +91,7 @@
       ;; only include `port` if it is specified; leave out for dynamic port: see
       ;; https://github.com/metabase/metabase/issues/7597
       (merge (when port {:port port}))
-      (sql/handle-additional-options details, :seperator-style :semicolon)))
+      (sql-jdbc.common/handle-additional-options details, :seperator-style :semicolon)))
 
 
 (defn- date-part [unit expr]
@@ -136,10 +138,10 @@
     :quarter-of-year (date-part :quarter expr)
     :year            (date-part :year expr)))
 
-(defn- date-interval [unit amount]
+(defmethod driver/date-interval [unit amount]
   (date-add unit amount :%getutcdate))
 
-(defn- unix-timestamp->timestamp [expr seconds-or-milliseconds]
+(defmethod sql.qp/unix-timestamp->timestamp [expr seconds-or-milliseconds]
   (case seconds-or-milliseconds
     ;; The second argument to DATEADD() gets casted to a 32-bit integer. BIGINT is 64 bites, so we tend to run into
     ;; integer overflow errors (especially for millisecond timestamps).
@@ -156,23 +158,23 @@
                                                  items))))
 
 ;; SQLServer doesn't support `TRUE`/`FALSE`; it uses `1`/`0`, respectively; convert these booleans to numbers.
-(defmethod sqlqp/->honeysql [SQLServerDriver Boolean]
+(defmethod sql.qp/->honeysql [SQLServerDriver Boolean]
   [_ bool]
   (if bool 1 0))
 
-(defmethod sqlqp/->honeysql [SQLServerDriver Time]
+(defmethod sql.qp/->honeysql [SQLServerDriver Time]
   [_ time-value]
   (hx/->time time-value))
 
-(defmethod sqlqp/->honeysql [SQLServerDriver :stddev]
+(defmethod sql.qp/->honeysql [SQLServerDriver :stddev]
   [driver [_ field]]
-  (hsql/call :stdev (sqlqp/->honeysql driver field)))
+  (hsql/call :stdev (sql.qp/->honeysql driver field)))
 
-(defn- string-length-fn [field-key]
+(defmethod sql.qp/string-length-fn [field-key]
   (hsql/call :len (hx/cast :VARCHAR field-key)))
 
 
-(def ^:private sqlserver-date-formatters (driver/create-db-time-formatters "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSZ"))
+(def ^:private sqlserver-date-formatters (driver.common/create-db-time-formatters "yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSZ"))
 (def ^:private sqlserver-db-time-query "select CONVERT(nvarchar(30), SYSDATETIMEOFFSET(), 127)")
 
 (u/strict-extend SQLServerDriver
@@ -181,9 +183,9 @@
    (sql/IDriverSQLDefaultsMixin)
    {:date-interval  (u/drop-first-arg date-interval)
     :details-fields (constantly (ssh/with-tunnel-config
-                                  [driver/default-host-details
-                                   (assoc driver/default-port-details :placeholder "1433")
-                                   (assoc driver/default-dbname-details
+                                  [driver.common/default-host-details
+                                   (assoc driver.common/default-port-details :placeholder "1433")
+                                   (assoc driver.common/default-dbname-details
                                      :name         "db"
                                      :placeholder  (tru "BirdsOfTheWorld"))
                                    {:name         "instance"
@@ -192,12 +194,12 @@
                                    {:name         "domain"
                                     :display-name (tru "Windows domain")
                                     :placeholder  (tru "N/A")}
-                                   driver/default-user-details
-                                   driver/default-password-details
-                                   driver/default-ssl-details
-                                   (assoc driver/default-additional-options-details
+                                   driver.common/default-user-details
+                                   driver.common/default-password-details
+                                   driver.common/default-ssl-details
+                                   (assoc driver.common/default-additional-options-details
                                      :placeholder  "trustServerCertificate=false")]))
-    :current-db-time (driver/make-current-db-time-fn sqlserver-db-time-query sqlserver-date-formatters)
+    :current-db-time (driver.common/current-db-time sqlserver-db-time-query sqlserver-date-formatters)
     :features        (fn [this]
                        ;; SQLServer LIKE clauses are case-sensitive or not based on whether the collation of the
                        ;; server and the columns themselves. Since this isn't something we can really change in the
@@ -209,7 +211,7 @@
    (sql/ISQLDriverDefaultsMixin)
    {:apply-limit               (u/drop-first-arg apply-limit)
     :apply-page                (u/drop-first-arg apply-page)
-    :column->base-type         (u/drop-first-arg column->base-type)
+    :database-type->base-type         (u/drop-first-arg database-type->base-type)
     :connection-details->spec  (u/drop-first-arg connection-details->spec)
     :current-datetime-fn       (constantly :%getutcdate)
     :date                      (u/drop-first-arg date)

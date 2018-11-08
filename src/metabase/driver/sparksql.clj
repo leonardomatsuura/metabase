@@ -14,8 +14,13 @@
             [metabase.driver
              [generic-sql :as sql]
              [hive-like :as hive-like]]
-            [metabase.driver.generic-sql.query-processor :as sqlqp]
+            [metabase.driver.sql.query-processor :as sql.qp]
             [metabase.models.field :refer [Field]]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
             [metabase.query-processor
              [store :as qp.store]
              [util :as qputil]]
@@ -37,7 +42,7 @@
   "Default alias for all source tables. (Not for source queries; those still use the default SQL QP alias of `source`.)"
   "t1")
 
-(defmethod sqlqp/->honeysql [SparkSQLDriver (class Field)]
+(defmethod sql.qp/->honeysql [SparkSQLDriver (class Field)]
   [driver field]
   (let [table            (qp.store/table (:table_id field))
         table-name       (if (:alias? table)
@@ -81,7 +86,7 @@
           :subname     (str "//" host ":" port "/" db jdbc-flags)}
          (dissoc opts :host :port :jdbc-flags)))
 
-(defn- connection-details->spec [details]
+(defmethod sql-jdbc.conn/connection-details->spec :sparksql [_ details]
   (-> details
       (update :port (fn [port]
                       (if (string? port)
@@ -89,7 +94,7 @@
                         port)))
       (set/rename-keys {:dbname :db})
       sparksql
-      (sql/handle-additional-options details)))
+      (sql-jdbc.common/handle-additional-options details)))
 
 (defn- dash-to-underscore [s]
   (when s
@@ -97,7 +102,7 @@
 
 ;; workaround for SPARK-9686 Spark Thrift server doesn't return correct JDBC metadata
 (defn- describe-database [_ {:keys [details] :as database}]
-  {:tables (with-open [conn (jdbc/get-connection (sql/db->jdbc-connection-spec database))]
+  {:tables (with-open [conn (jdbc/get-connection (sql-jdbc.conn/db->jdbc-connection-spec database))]
              (set (for [result (jdbc/query {:connection conn}
                                            ["show tables"])]
                     {:name   (:tablename result)
@@ -106,7 +111,7 @@
 
 ;; workaround for SPARK-9686 Spark Thrift server doesn't return correct JDBC metadata
 (defn- describe-table [_ {:keys [details] :as database} table]
-  (with-open [conn (jdbc/get-connection (sql/db->jdbc-connection-spec database))]
+  (with-open [conn (jdbc/get-connection (sql-jdbc.conn/db->jdbc-connection-spec database))]
     {:name   (:name table)
      :schema (:schema table)
      :fields (set (for [result (jdbc/query {:connection conn}
@@ -117,7 +122,7 @@
                                               (str "describe " (dash-to-underscore (:name table))))])]
                     {:name          (:col_name result)
                      :database-type (:data_type result)
-                     :base-type     (hive-like/column->base-type (keyword (:data_type result)))}))}))
+                     :base-type     (hive-like/database-type->base-type (keyword (:data_type result)))}))}))
 
 ;; we need this because transactions are not supported in Hive 1.2.1
 ;; bound variables are not supported in Spark SQL (maybe not Hive either, haven't checked)
@@ -131,7 +136,7 @@
                   (dissoc :params))]
     (sqlqp/do-with-try-catch
      (fn []
-       (let [db-connection (sql/db->jdbc-connection-spec database)]
+       (let [db-connection (sql-jdbc.conn/db->jdbc-connection-spec database)]
          (hive-like/run-query-without-timezone driver settings db-connection query))))))
 
 
@@ -142,12 +147,12 @@
           :describe-database  describe-database
           :describe-table     describe-table
           :describe-table-fks (constantly #{})
-          :details-fields     (constantly [driver/default-host-details
-                                           (assoc driver/default-port-details :default 10000)
-                                           (assoc driver/default-dbname-details :placeholder (tru "default"))
-                                           driver/default-user-details
-                                           driver/default-password-details
-                                           (assoc driver/default-additional-options-details
+          :details-fields     (constantly [driver.common/default-host-details
+                                           (assoc driver.common/default-port-details :default 10000)
+                                           (assoc driver.common/default-dbname-details :placeholder (tru "default"))
+                                           driver.common/default-user-details
+                                           driver.common/default-password-details
+                                           (assoc driver.common/default-additional-options-details
                                              :name        "jdbc-flags"
                                              :placeholder ";transportMode=http")])
           :execute-query      execute-query
@@ -166,7 +171,7 @@
   (merge (sql/ISQLDriverDefaultsMixin)
          {:apply-page                (u/drop-first-arg apply-page-using-row-number-for-offset)
           :apply-source-table        (u/drop-first-arg apply-source-table)
-          :column->base-type         (u/drop-first-arg hive-like/column->base-type)
+          :database-type->base-type         (u/drop-first-arg hive-like/database-type->base-type)
           :connection-details->spec  (u/drop-first-arg connection-details->spec)
           :date                      (u/drop-first-arg hive-like/date)
           :field->identifier         (u/drop-first-arg hive-like/field->identifier)

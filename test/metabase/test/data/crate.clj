@@ -2,7 +2,7 @@
   "Code for creating / destroying a Crate database from a `DatabaseDefinition`."
   (:require [clojure.java.jdbc :as jdbc]
             [clojure.string :as s]
-            [metabase.driver.generic-sql :as sql]
+
             (metabase.test.data [generic-sql :as generic]
                                 [interface :as i])
             [metabase.util :as u])

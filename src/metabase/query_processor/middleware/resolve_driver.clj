@@ -8,7 +8,7 @@
   under the key `:driver`."
   [qp]
   (fn [query]
-    (let [driver (or (driver/database-id->driver (:database query))
+    (let [driver (or (driver/database->driver (:database query))
                      (throw (Exception. "Unable to resolve driver for query.")))
           query  (assoc query :driver driver)]
       (binding [i/*driver* driver]

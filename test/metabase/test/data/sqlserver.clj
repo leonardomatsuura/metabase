@@ -1,7 +1,7 @@
 (ns metabase.test.data.sqlserver
   "Code for creating / destroying a SQLServer database from a `DatabaseDefinition`."
   (:require [clojure.java.jdbc :as jdbc]
-            [metabase.driver.generic-sql :as sql]
+
             [metabase.test.data
              [datasets :as datasets]
              [generic-sql :as generic]
@@ -81,7 +81,7 @@
   {:expectations-options :before-run}
   []
   (datasets/when-testing-engine :sqlserver
-    (let [connection-spec (sql/connection-details->spec (SQLServerDriver.) (database->connection-details :server nil))
+    (let [connection-spec (sql-jdbc.conn/connection-details->spec (SQLServerDriver.) (database->connection-details :server nil))
           leftover-dbs    (mapv :name (jdbc/query connection-spec "SELECT name
                                                                    FROM   master.dbo.sysdatabases
                                                                    WHERE  name NOT IN ('tempdb', 'master', 'model', 'msdb', 'rdsadmin');"))]

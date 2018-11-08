@@ -16,7 +16,7 @@
   [database :- i/DatabaseInstance]
   (try
     (let [tz-id (some-> database
-                        driver/->driver
+                        driver/database->driver
                         (driver/current-db-time database)
                         extract-time-zone)]
       (when-not (= tz-id (:timezone database))

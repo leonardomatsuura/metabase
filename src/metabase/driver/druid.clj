@@ -156,8 +156,8 @@
           :describe-database (u/drop-first-arg describe-database)
           :describe-table    (u/drop-first-arg describe-table)
           :details-fields    (constantly (ssh/with-tunnel-config
-                                           [(assoc driver/default-host-details :default "http://localhost")
-                                            (assoc driver/default-port-details
+                                           [(assoc driver.common/default-host-details :default "http://localhost")
+                                            (assoc driver.common/default-port-details
                                               :display-name (tru "Broker node port")
                                               :default      8082)]))
           :execute-query     (fn [_ query] (qp/execute-query do-query-with-cancellation query))

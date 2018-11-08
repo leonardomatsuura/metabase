@@ -2,10 +2,15 @@
   "Snowflake Driver."
   (:require [clojure.string :as str]
             [honeysql.core :as hsql]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
             [metabase
              [driver :as driver]
              [util :as u]]
-            [metabase.driver.generic-sql :as sql]
+
             [metabase.driver.generic-sql.query-processor :as sql.qp]
             [metabase.models
              [field :refer [Field]]
@@ -17,9 +22,7 @@
             [toucan.db :as db])
   (:import java.sql.Time))
 
-(defn- connection-details->spec
-  "Create a database specification for a snowflake database."
-  [{:keys [account regionid] :as opts}]
+(defmethod sql-jdbc.conn/connection-details->spec :snowflake [_ {:keys [account regionid], :as opts}]
   (let [host (if regionid
                (str account "." regionid)
                account)]
@@ -46,13 +49,13 @@
 (def ^:private snowflake-date-formatters
   "The default timestamp format for Snowflake.
   See https://docs.snowflake.net/manuals/sql-reference/data-types-datetime.html#timestamp."
-  (driver/create-db-time-formatters "yyyy-MM-dd HH:mm:ss.SSSSSSSSS Z"))
+  (driver.common/create-db-time-formatters "yyyy-MM-dd HH:mm:ss.SSSSSSSSS Z"))
 
 (def ^:private snowflake-db-time-query
   "Snowflake current database time, with hour and minute timezone offset."
   "select to_char(current_timestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZHTZM')")
 
-(def ^:private column->base-type
+(def ^:private database-type->base-type
   "Map of the default Snowflake column types -> Field base types. Add more
   mappings here as you come across them."
   {:NUMBER                     :type/Number
@@ -90,12 +93,12 @@
    :OBJECT                     :type/Dictionary
    :ARRAY                      :type/*})
 
-(defn- unix-timestamp->timestamp [expr seconds-or-milliseconds]
+(defmethod sql.qp/unix-timestamp->timestamp [expr seconds-or-milliseconds]
   (case seconds-or-milliseconds
     :seconds      (hsql/call :to_timestamp expr)
     :milliseconds (hsql/call :to_timestamp expr 3)))
 
-(defn- date-interval [unit amount]
+(defmethod driver/date-interval [unit amount]
   (hsql/call :dateadd
     (hsql/raw (name unit))
     (hsql/raw (int amount))
@@ -157,13 +160,12 @@
 
 
 (defn- table-rows-seq [driver database table]
-
   (sql/query driver database {:select [:*]
                               :from   [(qp.store/with-store
                                          (qp.store/store-database! database)
                                          (sql.qp/->honeysql driver table))]}))
 
-(defn- string-length-fn [field-key]
+(defmethod sql.qp/string-length-fn [field-key]
   (hsql/call :length (hx/cast :VARCHAR field-key)))
 
 (defn- describe-database [driver database]
@@ -177,7 +179,7 @@
          ;; find PKs and mark them
          (sql/add-table-pks metadata))))
 
-(defn- describe-table-fks [driver database table]
+(defmethod driver/describe-table-fks [driver database table]
   (sql/describe-table-fks driver database table (:name database)))
 
 (u/strict-extend SnowflakeDriver
@@ -214,7 +216,7 @@
                                                     :display-name "Role"
                                                     :placeholder  "my_role"}]))
           :format-custom-field-name (u/drop-first-arg str/lower-case)
-          :current-db-time          (driver/make-current-db-time-fn
+          :current-db-time          (driver.common/current-db-time
                                      snowflake-db-time-query
                                      snowflake-date-formatters)
           :table-rows-seq           table-rows-seq
@@ -232,7 +234,7 @@
           :current-datetime-fn       (constantly :%current_timestamp)
           :set-timezone-sql          (constantly "ALTER SESSION SET TIMEZONE = %s;")
           :unix-timestamp->timestamp (u/drop-first-arg unix-timestamp->timestamp)
-          :column->base-type         (u/drop-first-arg column->base-type)}))
+          :database-type->base-type         (u/drop-first-arg database-type->base-type)}))
 
 
 (defn -init-driver

@@ -69,7 +69,7 @@
 
 (defn- card-database-supports-nested-queries? [{{database-id :database} :dataset_query, :as card}]
   (when database-id
-    (when-let [driver (driver/database-id->driver database-id)]
+    (when-let [driver (driver/database->driver database-id)]
       (and (driver/driver-supports? driver :nested-queries)
            (mi/can-read? card)))))
 

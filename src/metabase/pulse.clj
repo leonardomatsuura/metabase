@@ -48,7 +48,7 @@
   "Returns the timezone for the given `CARD`. Either the report
   timezone (if applicable) or the JVM timezone."
   [card :- CardInstance]
-  (let [^String timezone-str (or (some-> card database-id driver/database-id->driver driver/report-timezone-if-supported)
+  (let [^String timezone-str (or (some-> card database-id driver/database->driver driver/report-timezone-if-supported)
                                  (System/getProperty "user.timezone"))]
     (TimeZone/getTimeZone timezone-str)))
 

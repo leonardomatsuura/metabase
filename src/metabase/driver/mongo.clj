@@ -29,22 +29,22 @@
                   :ok))
        1.0)))
 
-(defn- humanize-connection-error-message [message]
+(defmethod driver/humanize-connection-error-message [message]
   (condp re-matches message
     #"^Timed out after \d+ ms while waiting for a server .*$"
-    (driver/connection-error-messages :cannot-connect-check-host-and-port)
+    (driver.common/connection-error-messages :cannot-connect-check-host-and-port)
 
     #"^host and port should be specified in host:port format$"
-    (driver/connection-error-messages :invalid-hostname)
+    (driver.common/connection-error-messages :invalid-hostname)
 
     #"^Password can not be null when the authentication mechanism is unspecified$"
-    (driver/connection-error-messages :password-required)
+    (driver.common/connection-error-messages :password-required)
 
     #"^com.jcraft.jsch.JSchException: Auth fail$"
-    (driver/connection-error-messages :ssh-tunnel-auth-fail)
+    (driver.common/connection-error-messages :ssh-tunnel-auth-fail)
 
     #".*JSchException: java.net.ConnectException: Connection refused.*"
-    (driver/connection-error-messages :ssh-tunnel-connection-fail)
+    (driver.common/connection-error-messages :ssh-tunnel-connection-fail)
 
     #".*"                               ; default
     message))
@@ -174,17 +174,17 @@
           :describe-database                 (u/drop-first-arg describe-database)
           :describe-table                    (u/drop-first-arg describe-table)
           :details-fields                    (constantly (ssh/with-tunnel-config
-                                                           [driver/default-host-details
-                                                            (assoc driver/default-port-details :default 27017)
-                                                            (assoc driver/default-dbname-details
+                                                           [driver.common/default-host-details
+                                                            (assoc driver.common/default-port-details :default 27017)
+                                                            (assoc driver.common/default-dbname-details
                                                               :placeholder  (tru "carrierPigeonDeliveries"))
-                                                            (assoc driver/default-user-details :required false)
-                                                            (assoc driver/default-password-details :name "pass")
+                                                            (assoc driver.common/default-user-details :required false)
+                                                            (assoc driver.common/default-password-details :name "pass")
                                                             {:name         "authdb"
                                                              :display-name (tru "Authentication Database")
                                                              :placeholder  (tru "Optional database to use when authenticating")}
-                                                            driver/default-ssl-details
-                                                            (assoc driver/default-additional-options-details
+                                                            driver.common/default-ssl-details
+                                                            (assoc driver.common/default-additional-options-details
                                                               :display-name (tru "Additional Mongo connection string options")
                                                               :placeholder  "readPreference=nearest&replicaSet=test")]))
           :execute-query                     (u/drop-first-arg qp/execute-query)

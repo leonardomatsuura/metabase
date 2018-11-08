@@ -17,7 +17,7 @@
             [metabase.driver
              [generic-sql :as sql]
              [google :as google]]
-            [metabase.driver.generic-sql.query-processor :as sqlqp]
+            [metabase.driver.sql.query-processor :as sql.qp]
             [metabase.driver.generic-sql.util.unprepare :as unprepare]
             [metabase.mbql
              [schema :as mbql.s]
@@ -35,6 +35,11 @@
              [i18n :refer [tru]]
              [schema :as su]]
             [schema.core :as s]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
             [toucan.db :as db])
   (:import com.google.api.client.googleapis.auth.oauth2.GoogleCredential
            com.google.api.client.http.HttpRequestInitializer
@@ -300,7 +305,7 @@
     :quarter-of-year (extract :quarter   expr)
     :year            (extract :year      expr)))
 
-(defn- unix-timestamp->timestamp [expr seconds-or-milliseconds]
+(defmethod sql.qp/unix-timestamp->timestamp [expr seconds-or-milliseconds]
   (case seconds-or-milliseconds
     :seconds      (hsql/call :timestamp_seconds expr)
     :milliseconds (hsql/call :timestamp_millis  expr)))
@@ -375,32 +380,32 @@
 
 ;; These provide implementations of `->honeysql` that prevent HoneySQL from converting forms to prepared statement
 ;; parameters (`?` symbols)
-(defmethod sqlqp/->honeysql [BigQueryDriver String]
+(defmethod sql.qp/->honeysql [BigQueryDriver String]
   [_ s]
   ;; TODO - what happens if `s` contains single-quotes? Shouldn't we be escaping them somehow?
   (hx/literal s))
 
-(defmethod sqlqp/->honeysql [BigQueryDriver Boolean]
+(defmethod sql.qp/->honeysql [BigQueryDriver Boolean]
   [_ bool]
   (hsql/raw (if bool "TRUE" "FALSE")))
 
-(defmethod sqlqp/->honeysql [BigQueryDriver Date]
+(defmethod sql.qp/->honeysql [BigQueryDriver Date]
   [_ date]
   (hsql/call :timestamp (hx/literal (du/date->iso-8601 date))))
 
-(defmethod sqlqp/->honeysql [BigQueryDriver :time]
+(defmethod sql.qp/->honeysql [BigQueryDriver :time]
   [driver [_ value unit]]
   (->> value
        (unparse-bigquery-time *bigquery-timezone*)
-       (sqlqp/->honeysql driver)
+       (sql.qp/->honeysql driver)
        (sql/date driver unit)
        hx/->time))
 
-(defmethod sqlqp/->honeysql [Object :datetime-field]
+(defmethod sql.qp/->honeysql [Object :datetime-field]
   [driver [_ field unit]]
-  (sql/date driver unit (sqlqp/->honeysql driver field)))
+  (sql/date driver unit (sql.qp/->honeysql driver field)))
 
-(defmethod sqlqp/->honeysql [BigQueryDriver (class Field)]
+(defmethod sql.qp/->honeysql [BigQueryDriver (class Field)]
   [driver field]
   (let [{table-name :name, :as table} (qp.store/table (:table_id field))
         field-identifier              (map->BigQueryIdentifier
@@ -484,11 +489,11 @@
 ;;; |                                Other Driver / SQLDriver Method Implementations                                 |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
-(defn- string-length-fn [field-key]
+(defmethod sql.qp/string-length-fn [field-key]
   (hsql/call :length field-key))
 
-(defn- date-interval [driver unit amount]
-  (sqlqp/->honeysql driver (du/relative-date unit amount)))
+(defmethod driver/date-interval [driver unit amount]
+  (sql.qp/->honeysql driver (du/relative-date unit amount)))
 
 (defn- mbql->native
   "Custom implementation of ISQLDriver's `mbql->native` with these differences:
@@ -531,7 +536,7 @@
 
 
 ;; BigQuery doesn't return a timezone with it's time strings as it's always UTC, JodaTime parsing also defaults to UTC
-(def ^:private bigquery-date-formatters (driver/create-db-time-formatters "yyyy-MM-dd HH:mm:ss.SSSSSS"))
+(def ^:private bigquery-date-formatters (driver.common/create-db-time-formatters "yyyy-MM-dd HH:mm:ss.SSSSSS"))
 (def ^:private bigquery-db-time-query "select CAST(CURRENT_TIMESTAMP() AS STRING)")
 
 (u/strict-extend BigQueryDriver
@@ -542,7 +547,7 @@
           :apply-join-tables         (u/drop-first-arg apply-join-tables)
           :apply-order-by            apply-order-by
           ;; these two are actually not applicable since we don't use JDBC
-          :column->base-type         (constantly nil)
+          :database-type->base-type         (constantly nil)
           :connection-details->spec  (constantly nil)
           :current-datetime-fn       (constantly :%current_timestamp)
           :date                      (u/drop-first-arg date)
@@ -601,7 +606,7 @@
                                                              #{:foreign-keys})))
           :format-custom-field-name (u/drop-first-arg format-custom-field-name)
           :mbql->native             (u/drop-first-arg mbql->native)
-          :current-db-time          (driver/make-current-db-time-fn bigquery-db-time-query bigquery-date-formatters)}))
+          :current-db-time          (driver.common/current-db-time bigquery-db-time-query bigquery-date-formatters)}))
 
 (defn -init-driver
   "Register the BigQuery driver"

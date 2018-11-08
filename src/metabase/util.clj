@@ -324,7 +324,7 @@
   {:pre [(integer? decimal-place) (number? number)]}
   (double (.setScale (bigdec number) decimal-place BigDecimal/ROUND_HALF_UP)))
 
-(defn drop-first-arg
+(defn ^:deprecated drop-first-arg
   "Returns a new fn that drops its first arg and applies the rest to the original.
    Useful for creating `extend` method maps when you don't care about the `this` param. :flushed:
 

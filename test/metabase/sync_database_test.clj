@@ -63,7 +63,7 @@
 (defn- describe-table [_ _ table]
   (get sync-test-tables (:name table)))
 
-(defn- describe-table-fks [_ _ table]
+(defmethod driver/describe-table-fks [_ _ table]
   (set (when (= "movie" (:name table))
          #{{:fk-column-name   "studio"
             :dest-table       {:name   "studio"

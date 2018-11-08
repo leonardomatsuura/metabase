@@ -136,7 +136,7 @@
   {:style/indent 1}
   [database f]
   (fn []
-    (driver/sync-in-context (driver/->driver database) database
+    (driver/sync-in-context (driver/database->driver database) database
       f)))
 
 

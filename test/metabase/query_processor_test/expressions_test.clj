@@ -172,3 +172,8 @@
 (datasets/expect-with-engines (non-timeseries-engines-with-feature :expressions)
   [[nil] [0.0] [0.0] [10.0] [8.0] [5.0] [5.0] [nil] [0.0] [0.0]]
   (calculate-bird-scarcity [:* 1 [:field-id $count]]))
+
+(defn- x []
+  (toucan.db/delete! 'Database :engine "sparksql")
+  (metabase.test.data.datasets/with-engine :sparksql
+    (calculate-bird-scarcity [:* 1 [:field-id $count]])))

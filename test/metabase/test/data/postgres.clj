@@ -3,10 +3,9 @@
   (:require [metabase.test.data
              [generic-sql :as generic]
              [interface :as i]]
-            [metabase.util :as u])
-  (:import metabase.driver.postgres.PostgresDriver))
+            [metabase.util :as u]))
 
-(def ^:private ^:const field-base-type->sql-type
+(def ^:private field-base-type->sql-type
   {:type/BigInteger     "BIGINT"
    :type/Boolean        "BOOL"
    :type/Date           "DATE"
@@ -47,7 +46,7 @@
        (generic/default-drop-db-if-exists-sql driver dbdef)))
 
 
-(u/strict-extend PostgresDriver
+(u/strict-extend :postgres
   generic/IGenericSQLTestExtensions
   (merge generic/DefaultsMixin
          {:drop-db-if-exists-sql         drop-db-if-exists-sql

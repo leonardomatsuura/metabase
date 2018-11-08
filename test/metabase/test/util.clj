@@ -12,7 +12,7 @@
              [driver :as driver]
              [task :as task]
              [util :as u]]
-            [metabase.driver.generic-sql :as sql]
+
             [metabase.models
              [card :refer [Card]]
              [collection :as collection :refer [Collection]]

@@ -12,7 +12,7 @@
             [metabase.driver
              [generic-sql :as sql]
              [postgres :as postgres]]
-            [metabase.driver.generic-sql.query-processor :as sqlqp]
+            [metabase.driver.sql.query-processor :as sql.qp]
             [metabase.models
              [database :refer [Database]]
              [field :refer [Field]]
@@ -26,9 +26,7 @@
              [interface :as i]]
             [toucan.db :as db]
             [toucan.util.test :as tt])
-  (:import metabase.driver.postgres.PostgresDriver))
-
-(def ^:private ^PostgresDriver pg-driver (PostgresDriver.))
+  (:import metabase.driver.postgres.:postgres))
 
 ;; Check that SSL params get added the connection details in the way we'd like # no SSL -- this should *not* include
 ;; the key :ssl (regardless of its value) since that will cause the PG driver to use SSL anyway
@@ -38,11 +36,11 @@
    :subprotocol "postgresql"
    :subname     "//localhost:5432/bird_sightings?sslmode=disable&OpenSourceSubProtocolOverride=true"
    :sslmode     "disable"}
-  (sql/connection-details->spec pg-driver {:ssl    false
-                                           :host   "localhost"
-                                           :port   5432
-                                           :dbname "bird_sightings"
-                                           :user   "camsaul"}))
+  (sql.conn/connection-details->spec :postgres {:ssl    false
+                                                :host   "localhost"
+                                                :port   5432
+                                                :dbname "bird_sightings"
+                                                :user   "camsaul"}))
 
 ;; ## ssl - check that expected params get added
 (expect
@@ -53,11 +51,11 @@
    :user        "camsaul"
    :sslfactory  "org.postgresql.ssl.NonValidatingFactory"
    :subname     "//localhost:5432/bird_sightings?ssl=true&sslmode=require&OpenSourceSubProtocolOverride=true"}
-  (sql/connection-details->spec pg-driver {:ssl    true
-                                           :host   "localhost"
-                                           :port   5432
-                                           :dbname "bird_sightings"
-                                           :user   "camsaul"}))
+  (sql.conn/connection-details->spec :postgres {:ssl    true
+                                                :host   "localhost"
+                                                :port   5432
+                                                :dbname "bird_sightings"
+                                                :user   "camsaul"}))
 
 ;; Verify that we identify JSON columns and mark metadata properly during sync
 (expect-with-engine :postgres
@@ -182,7 +180,7 @@
 (defn drop-if-exists-and-create-db!
   "Drop a Postgres database named `db-name` if it already exists; then create a new empty one with that name."
   [db-name]
-  (let [spec (sql/connection-details->spec pg-driver (i/database->connection-details pg-driver :server nil))]
+  (let [spec (sql.conn/connection-details->spec :postgres (i/database->connection-details :postgres :server nil))]
     ;; kill any open connections
     (jdbc/query spec ["SELECT pg_terminate_backend(pg_stat_activity.pid)
                          FROM pg_stat_activity
@@ -199,25 +197,25 @@
 ;; Check that we properly fetch materialized views.
 ;; As discussed in #2355 they don't come back from JDBC `DatabaseMetadata` so we have to fetch them manually.
 (expect-with-engine :postgres
-  {:tables #{(default-table-result "test_mview")}}
-  (do
-    (drop-if-exists-and-create-db! "materialized_views_test")
-    (let [details (i/database->connection-details pg-driver :db {:database-name "materialized_views_test"})]
-      (jdbc/execute! (sql/connection-details->spec pg-driver details)
-                     ["DROP MATERIALIZED VIEW IF EXISTS test_mview;
+                    {:tables #{(default-table-result "test_mview")}}
+                    (do
+                      (drop-if-exists-and-create-db! "materialized_views_test")
+                      (let [details (i/database->connection-details :postgres :db {:database-name "materialized_views_test"})]
+                        (jdbc/execute! (sql.conn/connection-details->spec :postgres details)
+                                       ["DROP MATERIALIZED VIEW IF EXISTS test_mview;
                        CREATE MATERIALIZED VIEW test_mview AS
                        SELECT 'Toucans are the coolest type of bird.' AS true_facts;"])
-      (tt/with-temp Database [database {:engine :postgres, :details (assoc details :dbname "materialized_views_test")}]
-        (driver/describe-database pg-driver database)))))
+                        (tt/with-temp Database [database {:engine :postgres, :details (assoc details :dbname "materialized_views_test")}]
+                          (driver/describe-database :postgres database)))))
 
 ;; Check that we properly fetch foreign tables.
 (expect-with-engine :postgres
-  {:tables (set (map default-table-result ["foreign_table" "local_table"]))}
-  (do
-    (drop-if-exists-and-create-db! "fdw_test")
-    (let [details (i/database->connection-details pg-driver :db {:database-name "fdw_test"})]
-      (jdbc/execute! (sql/connection-details->spec pg-driver details)
-                     [(str "CREATE EXTENSION IF NOT EXISTS postgres_fdw;
+                    {:tables (set (map default-table-result ["foreign_table" "local_table"]))}
+                    (do
+                      (drop-if-exists-and-create-db! "fdw_test")
+                      (let [details (i/database->connection-details :postgres :db {:database-name "fdw_test"})]
+                        (jdbc/execute! (sql.conn/connection-details->spec :postgres details)
+                                       [(str "CREATE EXTENSION IF NOT EXISTS postgres_fdw;
                             CREATE SERVER foreign_server
                                 FOREIGN DATA WRAPPER postgres_fdw
                                 OPTIONS (host '" (:host details) "', port '" (:port details) "', dbname 'fdw_test');
@@ -225,46 +223,46 @@
                             CREATE FOREIGN TABLE foreign_table (data text)
                                 SERVER foreign_server
                                 OPTIONS (schema_name 'public', table_name 'local_table');")])
-      (tt/with-temp Database [database {:engine :postgres, :details (assoc details :dbname "fdw_test")}]
-        (driver/describe-database pg-driver database)))))
+                        (tt/with-temp Database [database {:engine :postgres, :details (assoc details :dbname "fdw_test")}]
+                          (driver/describe-database :postgres database)))))
 
 ;; make sure that if a view is dropped and recreated that the original Table object is marked active rather than a new
 ;; one being created (#3331)
 (expect-with-engine :postgres
-  [{:name "angry_birds", :active true}]
-  (let [details (i/database->connection-details pg-driver :db {:database-name "dropped_views_test"})
-        spec    (sql/connection-details->spec pg-driver details)
-        exec!   #(doseq [statement %]
-                   (jdbc/execute! spec [statement]))]
-    ;; create the postgres DB
-    (drop-if-exists-and-create-db! "dropped_views_test")
-    ;; create the DB object
-    (tt/with-temp Database [database {:engine :postgres, :details (assoc details :dbname "dropped_views_test")}]
-      (let [sync! #(sync/sync-database! database)]
-        ;; populate the DB and create a view
-        (exec! ["CREATE table birds (name VARCHAR UNIQUE NOT NULL);"
-                "INSERT INTO birds (name) VALUES ('Rasta'), ('Lucky'), ('Kanye Nest');"
-                "CREATE VIEW angry_birds AS SELECT upper(name) AS name FROM birds;"])
-        ;; now sync the DB
-        (sync!)
-        ;; drop the view
-        (exec! ["DROP VIEW angry_birds;"])
-        ;; sync again
-        (sync!)
-        ;; recreate the view
-        (exec! ["CREATE VIEW angry_birds AS SELECT upper(name) AS name FROM birds;"])
-        ;; sync one last time
-        (sync!)
-        ;; now take a look at the Tables in the database related to the view. THERE SHOULD BE ONLY ONE!
-        (map (partial into {}) (db/select [Table :name :active] :db_id (u/get-id database), :name "angry_birds"))))))
+                    [{:name "angry_birds", :active true}]
+                    (let [details (i/database->connection-details :postgres :db {:database-name "dropped_views_test"})
+                          spec    (sql.conn/connection-details->spec :postgres details)
+                          exec!   #(doseq [statement %]
+                                     (jdbc/execute! spec [statement]))]
+                      ;; create the postgres DB
+                      (drop-if-exists-and-create-db! "dropped_views_test")
+                      ;; create the DB object
+                      (tt/with-temp Database [database {:engine :postgres, :details (assoc details :dbname "dropped_views_test")}]
+                        (let [sync! #(sync/sync-database! database)]
+                          ;; populate the DB and create a view
+                          (exec! ["CREATE table birds (name VARCHAR UNIQUE NOT NULL);"
+                                  "INSERT INTO birds (name) VALUES ('Rasta'), ('Lucky'), ('Kanye Nest');"
+                                  "CREATE VIEW angry_birds AS SELECT upper(name) AS name FROM birds;"])
+                          ;; now sync the DB
+                          (sync!)
+                          ;; drop the view
+                          (exec! ["DROP VIEW angry_birds;"])
+                          ;; sync again
+                          (sync!)
+                          ;; recreate the view
+                          (exec! ["CREATE VIEW angry_birds AS SELECT upper(name) AS name FROM birds;"])
+                          ;; sync one last time
+                          (sync!)
+                          ;; now take a look at the Tables in the database related to the view. THERE SHOULD BE ONLY ONE!
+                          (map (partial into {}) (db/select [Table :name :active] :db_id (u/get-id database), :name "angry_birds"))))))
 
 ;;; timezone tests
 
 (defn- get-timezone-with-report-timezone [report-timezone]
   (ffirst (:rows (#'sqlqp/run-query-with-timezone
-                  pg-driver
+                  :postgres
                   {:report-timezone report-timezone}
-                  (sql/connection-details->spec pg-driver (i/database->connection-details pg-driver :server nil))
+                  (sql.conn/connection-details->spec :postgres (i/database->connection-details :postgres :server nil))
                   {:query "SELECT current_setting('TIMEZONE') AS timezone;"}))))
 
 ;; check that if we set report-timezone to US/Pacific that the session timezone is in fact US/Pacific
@@ -287,10 +285,10 @@
 ;; make sure connection details w/ extra params work as expected
 (expect
   "//localhost:5432/cool?sslmode=disable&OpenSourceSubProtocolOverride=true&prepareThreshold=0"
-  (:subname (sql/connection-details->spec pg-driver {:host               "localhost"
-                                                     :port               "5432"
-                                                     :dbname             "cool"
-                                                     :additional-options "prepareThreshold=0"})))
+  (:subname (sql.conn/connection-details->spec :postgres {:host               "localhost"
+                                                          :port               "5432"
+                                                          :dbname             "cool"
+                                                          :additional-options "prepareThreshold=0"})))
 
 (expect-with-engine :postgres
   "UTC"
@@ -304,33 +302,33 @@
                       #metabase.models.field.FieldInstance{:name "end_time",   :fingerprint {:global {:distinct-count 1
                                                                                                       :nil% 0.0}
                                                                                              :type {:type/DateTime {:earliest "1970-01-01T09:00:00.000Z", :latest "1970-01-01T09:00:00.000Z"}}}}
-    #metabase.models.field.FieldInstance{:name "reason",     :fingerprint {:global {:distinct-count 1
-:nil% 0.0}
-                                                                           :type   {:type/Text {:percent-json    0.0
-                                                                                                :percent-url     0.0
-                                                                                                :percent-email   0.0
-                                                                                                :average-length 12.0}}}}}
-  (do
-    (drop-if-exists-and-create-db! "time_field_test")
-    (let [details (i/database->connection-details pg-driver :db {:database-name "time_field_test"})]
-      (jdbc/execute! (sql/connection-details->spec pg-driver details)
-                     [(str "CREATE TABLE toucan_sleep_schedule ("
-                           "  start_time TIME WITHOUT TIME ZONE NOT NULL, "
-                           "  end_time TIME WITHOUT TIME ZONE NOT NULL, "
-                           "  reason VARCHAR(256) NOT NULL"
-                           ");"
-                           "INSERT INTO toucan_sleep_schedule (start_time, end_time, reason) "
-                           "  VALUES ('22:00'::time, '9:00'::time, 'Beauty Sleep');")])
-      (tt/with-temp Database [database {:engine :postgres, :details (assoc details :dbname "time_field_test")}]
-        (sync/sync-database! database)
-        (set (db/select [Field :name :fingerprint] :table_id (db/select-one-id Table :db_id (u/get-id database))))))))
+                      #metabase.models.field.FieldInstance{:name "reason",     :fingerprint {:global {:distinct-count 1
+                                                                                                      :nil% 0.0}
+                                                                                             :type   {:type/Text {:percent-json    0.0
+                                                                                                                  :percent-url     0.0
+                                                                                                                  :percent-email   0.0
+                                                                                                                  :average-length 12.0}}}}}
+                    (do
+                      (drop-if-exists-and-create-db! "time_field_test")
+                      (let [details (i/database->connection-details :postgres :db {:database-name "time_field_test"})]
+                        (jdbc/execute! (sql.conn/connection-details->spec :postgres details)
+                                       [(str "CREATE TABLE toucan_sleep_schedule ("
+                                             "  start_time TIME WITHOUT TIME ZONE NOT NULL, "
+                                             "  end_time TIME WITHOUT TIME ZONE NOT NULL, "
+                                             "  reason VARCHAR(256) NOT NULL"
+                                             ");"
+                                             "INSERT INTO toucan_sleep_schedule (start_time, end_time, reason) "
+                                             "  VALUES ('22:00'::time, '9:00'::time, 'Beauty Sleep');")])
+                        (tt/with-temp Database [database {:engine :postgres, :details (assoc details :dbname "time_field_test")}]
+                          (sync/sync-database! database)
+                          (set (db/select [Field :name :fingerprint] :table_id (db/select-one-id Table :db_id (u/get-id database))))))))
 
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                             POSTGRES ENUM SUPPORT                                              |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
-(defn- enums-test-db-details [] (i/database->connection-details pg-driver :db {:database-name "enums_test"}))
+(defn- enums-test-db-details [] (i/database->connection-details :postgres :db {:database-name "enums_test"}))
 
 (defn- create-enums-db!
   "Create a Postgres database called `enums_test` that has a couple of enum types and a couple columns of those types.
@@ -338,7 +336,7 @@
   properly."
   []
   (drop-if-exists-and-create-db! "enums_test")
-  (jdbc/with-db-connection [conn (sql/connection-details->spec pg-driver (enums-test-db-details))]
+  (jdbc/with-db-connection [conn (sql.conn/connection-details->spec :postgres (enums-test-db-details))]
     (doseq [sql ["CREATE TYPE \"bird type\" AS ENUM ('toucan', 'pigeon', 'turkey');"
                  "CREATE TYPE bird_status AS ENUM ('good bird', 'angry bird', 'delicious bird');"
                  (str "CREATE TABLE birds ("
@@ -367,20 +365,20 @@
 
 ;; check that describe-table properly describes the database & base types of the enum fields
 (expect-with-engine :postgres
-  {:name   "birds"
-   :fields #{{:name          "name",
-              :database-type "varchar"
-              :base-type     :type/Text
-              :pk?           true}
-             {:name          "status"
-              :database-type "bird_status"
-              :base-type     :type/PostgresEnum}
-             {:name          "type"
-              :database-type "bird type"
-              :base-type     :type/PostgresEnum}}}
-  (do-with-enums-db
-    (fn [db]
-      (driver/describe-table pg-driver db {:name "birds"}))))
+                    {:name   "birds"
+                     :fields #{{:name          "name",
+                                :database-type "varchar"
+                                :base-type     :type/Text
+                                :pk?           true}
+                               {:name          "status"
+                                :database-type "bird_status"
+                                :base-type     :type/PostgresEnum}
+                               {:name          "type"
+                                :database-type "bird type"
+                                :base-type     :type/PostgresEnum}}}
+                    (do-with-enums-db
+                     (fn [db]
+                       (driver/describe-table :postgres db {:name "birds"}))))
 
 ;; check that when syncing the DB the enum types get recorded appropriately
 (expect-with-engine :postgres
@@ -396,8 +394,8 @@
 
 ;; check that values for enum types get wrapped in appropriate CAST() fn calls in `->honeysql`
 (expect-with-engine :postgres
-  {:name :cast, :args ["toucan" (keyword "bird type")]}
-  (sqlqp/->honeysql pg-driver [:value "toucan" {:database_type "bird type", :base_type :type/PostgresEnum}]))
+                    {:name :cast, :args ["toucan" (keyword "bird type")]}
+                    (sql.qp/->honeysql :postgres [:value "toucan" {:database_type "bird type", :base_type :type/PostgresEnum}]))
 
 ;; End-to-end check: make sure everything works as expected when we run an actual query
 (expect-with-engine :postgres

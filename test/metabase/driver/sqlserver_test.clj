@@ -9,7 +9,8 @@
              [util :as tu :refer [obj->json->obj]]]
             [metabase.test.data
              [datasets :refer [expect-with-engine]]
-             [interface :refer [def-database-definition]]]))
+             [interface :refer [def-database-definition]]]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]))
 
 ;;; -------------------------------------------------- VARCHAR(MAX) --------------------------------------------------
 
@@ -42,8 +43,8 @@
    :password        "toucans"
    :encrypt         false
    :loginTimeout    10}
-  (-> (sql/connection-details->spec
-       (sqlserver/->SQLServerDriver)
+  (-> (sql-jdbc.conn/connection-details->spec
+       :sqlserver
        {:user               "cam"
         :password           "toucans"
         :db                 "birddb"

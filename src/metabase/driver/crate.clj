@@ -6,11 +6,27 @@
              [driver :as driver]
              [util :as u]]
             [metabase.driver.crate.util :as crate-util]
-            [metabase.driver.generic-sql :as sql]
-            [metabase.util.i18n :refer [tru]])
-  (:import java.sql.DatabaseMetaData))
 
-(def ^:private ^:const column->base-type
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
+            [metabase.util.i18n :refer [tru]])
+  (:import [clojure.lang Keyword PersistentVector]
+           com.mchange.v2.c3p0.ComboPooledDataSource
+           honeysql.types.SqlCall
+           [java.sql DatabaseMetaData ResultSet]
+           [java.util Date Map]
+           metabase.models.field.FieldInstance
+           java.sql.DatabaseMetaData))
+
+;; This does something important for the Crate driver, apparently (what?)
+(extend-protocol jdbc/IResultSetReadColumn
+  (class (object-array []))
+  (result-set-read-column [x _ _] (PersistentVector/adopt x)))
+
+(def ^:private ^:const database-type->base-type
   "Map of Crate column types -> Field base types
    Crate data types -> https://crate.io/docs/reference/sql/data_types.html"
   {:integer         :type/Integer
@@ -44,9 +60,7 @@
 
 (def ^:private ^:const now (hsql/call :current_timestamp 3))
 
-(defn- connection-details->spec
-  [{:keys [hosts]
-    :as   details}]
+(defmethod sql-jdbc.conn/connection-details->spec :crate [_ {:keys [hosts], :as details}]
   (merge {:classname   "io.crate.client.jdbc.CrateDriver" ; must be in classpath
           :subprotocol "crate"
           :subname     (str "//" hosts)
@@ -54,16 +68,16 @@
          (dissoc details :hosts)))
 
 (defn- can-connect? [details]
-  (let [connection-spec (connection-details->spec details)]
+  (let [connection-spec (sql-jdbc.conn/connection-details->spec details)]
     (= 1 (first (vals (first (jdbc/query connection-spec ["select 1"])))))))
 
-(defn- string-length-fn [field-key]
+(defmethod sql.qp/string-length-fn [field-key]
   (hsql/call :char_length field-key))
 
 (defn- describe-table-fields
   [database _ {:keys [schema name]}]
   (let [columns (jdbc/query
-                 (sql/db->jdbc-connection-spec database)
+                 (sql-jdbc.conn/db->jdbc-connection-spec database)
                  [(format "select column_name, data_type as type_name
                            from information_schema.columns
                            where table_name like '%s' and table_schema like '%s'
@@ -72,7 +86,7 @@
            {:name          column_name
             :custom        {:column-type type_name}
             :database-type type_name
-            :base-type     (or (column->base-type (keyword type_name))
+            :base-type     (or (database-type->base-type (keyword type_name))
                                (do (log/warn (format "Don't know how to map column type '%s' to a Field base_type, falling back to :type/*." type_name))
                                    :type/*))}))))
 
@@ -100,7 +114,7 @@
   clojure.lang.Named
   (getName [_] "Crate"))
 
-(def ^:private crate-date-formatters (driver/create-db-time-formatters "yyyy-MM-dd HH:mm:ss.SSSSSSZ"))
+(def ^:private crate-date-formatters (driver.common/create-db-time-formatters "yyyy-MM-dd HH:mm:ss.SSSSSSZ"))
 (def ^:private crate-db-time-query "select DATE_FORMAT(current_timestamp, '%Y-%m-%d %H:%i:%S.%fZ')")
 
 (u/strict-extend CrateDriver
@@ -113,11 +127,11 @@
                                          :display-name (tru "Hosts")
                                          :default      "localhost:5432/"}])
           :features        (comp (u/rpartial disj :foreign-keys) sql/features)
-          :current-db-time (driver/make-current-db-time-fn crate-db-time-query crate-date-formatters)})
+          :current-db-time (driver.common/current-db-time crate-db-time-query crate-date-formatters)})
   sql/ISQLDriver
   (merge (sql/ISQLDriverDefaultsMixin)
          {:connection-details->spec  (u/drop-first-arg connection-details->spec)
-          :column->base-type         (u/drop-first-arg column->base-type)
+          :database-type->base-type         (u/drop-first-arg database-type->base-type)
           :string-length-fn          (u/drop-first-arg string-length-fn)
           :date                      crate-util/date
           :quote-style               (constantly :crate)

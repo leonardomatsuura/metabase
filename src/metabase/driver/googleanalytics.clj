@@ -224,7 +224,7 @@
 
 ;;; ----------------------------------------------------- Driver -----------------------------------------------------
 
-(defn- humanize-connection-error-message [message]
+(defmethod driver/humanize-connection-error-message [message]
   ;; if we get a big long message about how we need to enable the GA API, then replace it with a short message about
   ;; how we need to enable the API
   (if-let [[_ enable-api-url] (re-find #"Enable it by visiting ([^\s]+) then retry." message)]
@@ -264,8 +264,7 @@
           :process-query-in-context          (u/drop-first-arg process-query-in-context)
           :mbql->native                      (u/drop-first-arg qp/mbql->native)
           :table-rows-seq                    (u/drop-first-arg table-rows-seq)
-          :humanize-connection-error-message (u/drop-first-arg humanize-connection-error-message)
-          :default-to-case-sensitive?        (constantly false)}))
+          :humanize-connection-error-message (u/drop-first-arg humanize-connection-error-message)}))
 
 (defn -init-driver
   "Register the Google Analytics driver"

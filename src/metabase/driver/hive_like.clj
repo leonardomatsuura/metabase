@@ -8,11 +8,16 @@
              [field :refer [Field]]
              [table :refer [Table]]]
             [metabase.util :as u]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.common :as driver.common]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
             [metabase.util.honeysql-extensions :as hx]
             [toucan.db :as db])
   (:import java.util.Date))
 
-(def column->base-type
+(def database-type->base-type
   "Map of Spark SQL (Hive) column types -> Field base types.
    Add more mappings here as you come across them."
   {;; Numeric types
